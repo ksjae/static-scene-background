@@ -1,0 +1,21 @@
+{
+  "id": "static-scene-background",
+  "title": "Static Scene Background",
+  "description": "Replaces the solid-color area outside the scene map with a static, blurred version of the scene's background image that stays fixed during panning.",
+  "version": "1.0.0",
+  "authors": [
+    {
+      "name": "sjk"
+    }
+  ],
+  "compatibility": {
+    "minimum": "13",
+    "verified": "13"
+  },
+  "esmodules": [
+    "scripts/module.js"
+  ],
+  "styles": [
+    "styles/module.css"
+  ]
+}

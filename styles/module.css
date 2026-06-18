@@ -1,0 +1,23 @@
+/* ======================================================
+   Static Scene Background – Stylesheet
+   ====================================================== */
+
+#static-scene-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transform: scale(1.1);
+  z-index: 0;
+  pointer-events: none;
+  /* blur is applied inline via JS so it respects the blurAmount setting */
+}
+
+/* Make the Foundry board transparent so our div shows through */
+#board {
+  background: transparent !important;
+}
