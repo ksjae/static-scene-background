@@ -14,6 +14,10 @@ let currentLoadId = 0;
  * Clean up existing Pixi background resources
  */
 function cleanupBackground() {
+  if (canvas.app?.renderer?.background) {
+    canvas.app.renderer.background.alpha = 1;
+  }
+
   if (canvas.app && canvas.app.ticker && updateBgPosition) {
     canvas.app.ticker.remove(updateBgPosition);
   }
@@ -139,10 +143,14 @@ function updateBgPosition() {
     bgMask.drawRect(vx, vy, vw, vh);
 
     // Scene hole
-    if (canvas.dimensions && canvas.dimensions.rect) {
+    if (canvas.dimensions) {
       bgMask.beginHole();
-      const r = canvas.dimensions.rect;
-      bgMask.drawRect(r.x, r.y, r.width, r.height);
+      const r = (bgSprite.useTransparent && canvas.dimensions.sceneRect)
+        ? canvas.dimensions.sceneRect
+        : canvas.dimensions.rect;
+      if (r) {
+        bgMask.drawRect(r.x, r.y, r.width, r.height);
+      }
       bgMask.endHole();
     }
     bgMask.endFill();
@@ -154,7 +162,7 @@ function updateBgPosition() {
  * @param {string|null} imageSrc  URL/path of the image
  * @param {number}       blur     Blur amount
  */
-async function applyPixiBackground(imageSrc, blur) {
+async function applyPixiBackground(imageSrc, blur, useTransparent) {
   const loadId = ++currentLoadId;
   cleanupBackground();
 
@@ -208,6 +216,7 @@ async function applyPixiBackground(imageSrc, blur) {
     bgSprite = new PIXI.Sprite(texture);
     bgSprite.name = "static-scene-bg-pixi";
     bgSprite.imageSrc = imageSrc; // Store original source for verification/debugging
+    bgSprite.useTransparent = useTransparent; // Cache the transparency setting
 
     // Set fallback filter if offline blur failed
     if (fallbackToFilter && blur > 0 && PIXI.filters) {
@@ -259,7 +268,16 @@ function refreshFromScene() {
   const sceneBlur = canvas.scene?.getFlag(MODULE_ID, "sceneBlur");
   const blur = (sceneBlur !== undefined && sceneBlur !== null) ? sceneBlur : game.settings.get(MODULE_ID, "blurAmount");
 
-  applyPixiBackground(src, blur);
+  const sceneTransparent = canvas.scene?.getFlag(MODULE_ID, "transparentBg");
+  const useTransparent = (sceneTransparent !== undefined && sceneTransparent !== null && sceneTransparent !== "")
+    ? (sceneTransparent === "true" || sceneTransparent === true)
+    : game.settings.get(MODULE_ID, "transparentBg");
+
+  if (canvas.app?.renderer?.background) {
+    canvas.app.renderer.background.alpha = useTransparent ? 0 : 1;
+  }
+
+  applyPixiBackground(src, blur, useTransparent);
 }
 
 /* ---------- API methods ---------- */
@@ -323,6 +341,18 @@ Hooks.once("init", () => {
     type: String,
     default: "",
     filePicker: "image",
+    onChange: () => {
+      refreshFromScene();
+    },
+  });
+
+  game.settings.register(MODULE_ID, "transparentBg", {
+    name: "Transparent Background Color",
+    hint: "Extend the blurred background into the scene's padding/margin area, replacing the solid background color.",
+    scope: "client",
+    config: true,
+    type: Boolean,
+    default: false,
     onChange: () => {
       refreshFromScene();
     },
@@ -410,6 +440,11 @@ Hooks.on("renderSceneConfig", (app, html, data) => {
   const globalBlur = game.settings.get(MODULE_ID, "blurAmount");
   const displayBlur = hasSceneBlur ? blurValue : globalBlur;
 
+  const transparentValue = doc?.getFlag(MODULE_ID, "transparentBg");
+  const isInherit = (transparentValue === undefined || transparentValue === null || transparentValue === "") ? 'selected' : '';
+  const isTrue = (transparentValue === "true" || transparentValue === true) ? 'selected' : '';
+  const isFalse = (transparentValue === "false" || transparentValue === false) ? 'selected' : '';
+
   // --- Blurred Background Image picker ---
   const bgGroup = document.createElement("div");
   bgGroup.className = "form-group";
@@ -437,9 +472,25 @@ Hooks.on("renderSceneConfig", (app, html, data) => {
     <p class="hint">Blur intensity for this scene (0–50 px). Defaults to the global setting (${globalBlur}) if unchanged.</p>
   `;
 
+  // --- Transparent Background Color select ---
+  const transparentGroup = document.createElement("div");
+  transparentGroup.className = "form-group";
+  transparentGroup.innerHTML = `
+    <label>Transparent Background Color</label>
+    <div class="form-fields">
+      <select name="flags.${MODULE_ID}.transparentBg">
+        <option value="" ${isInherit}>Default (Global Setting)</option>
+        <option value="true" ${isTrue}>Transparent</option>
+        <option value="false" ${isFalse}>Opaque</option>
+      </select>
+    </div>
+    <p class="hint">If set to Transparent, the blurred background will extend into the scene's padding/margin area, replacing the solid background color.</p>
+  `;
+
   if (insertBefore) {
-    anchorGroup.before(bgGroup, blurGroup);
+    anchorGroup.before(bgGroup, blurGroup, transparentGroup);
   } else {
+    insertAfterEl.after(transparentGroup);
     insertAfterEl.after(blurGroup);
     insertAfterEl.after(bgGroup);
   }
