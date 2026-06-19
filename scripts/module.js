@@ -18,6 +18,15 @@ function cleanupBackground() {
     canvas.app.renderer.background.alpha = 1;
   }
 
+  if (canvas.primary && canvas.primary._backgroundColor) {
+    canvas.primary.clearColor = [...canvas.primary._backgroundColor, 1];
+  }
+
+  const bgGraphic = canvas.primary?.children[0];
+  if (bgGraphic && bgGraphic.name !== "background" && bgGraphic.constructor.name !== "PrimarySpriteMesh") {
+    bgGraphic.visible = true;
+  }
+
   if (canvas.app && canvas.app.ticker && updateBgPosition) {
     canvas.app.ticker.remove(updateBgPosition);
   }
@@ -97,6 +106,22 @@ function blurImageOffline(src, blurRadius) {
  */
 function updateBgPosition() {
   if (!bgSprite || bgSprite.destroyed || !canvas.stage) return;
+
+  // Sync background transparency settings (ensures custom settings stay active during redraws)
+  if (canvas.app?.renderer?.background) {
+    canvas.app.renderer.background.alpha = bgSprite.useTransparent ? 0 : 1;
+  }
+  if (canvas.primary) {
+    if (bgSprite.useTransparent) {
+      canvas.primary.clearColor = [0, 0, 0, 0];
+    } else if (canvas.primary._backgroundColor) {
+      canvas.primary.clearColor = [...canvas.primary._backgroundColor, 1];
+    }
+  }
+  const bgGraphic = canvas.primary?.children[0];
+  if (bgGraphic && bgGraphic.name !== "background" && bgGraphic.constructor.name !== "PrimarySpriteMesh") {
+    bgGraphic.visible = !bgSprite.useTransparent;
+  }
 
   // Use toLocal to calculate bounds independent of stage pivot/scale/pan offset
   const topLeft = canvas.stage.toLocal(new PIXI.Point(0, 0));
@@ -235,7 +260,7 @@ async function applyPixiBackground(imageSrc, blur, useTransparent) {
     }
 
     bgContainer.addChild(bgSprite);
-    renderedGroup.addChildAt(bgContainer, 1);
+    renderedGroup.addChildAt(bgContainer, 0);
 
     // Create mask
     bgMask = new PIXI.Graphics();
@@ -275,6 +300,10 @@ function refreshFromScene() {
 
   if (canvas.app?.renderer?.background) {
     canvas.app.renderer.background.alpha = useTransparent ? 0 : 1;
+  }
+
+  if (canvas.primary) {
+    canvas.primary.renderDirty = true;
   }
 
   applyPixiBackground(src, blur, useTransparent);
@@ -357,6 +386,28 @@ Hooks.once("init", () => {
       refreshFromScene();
     },
   });
+
+  // Patch PrimaryCanvasGroup texture format and clear behavior
+  const PCG = globalThis.PrimaryCanvasGroup || foundry.canvas.groups?.PrimaryCanvasGroup;
+  if (PCG) {
+    PCG.textureConfiguration.format = PIXI.FORMATS.RGBA;
+
+    const originalRender = PCG.prototype._render;
+    PCG.prototype._render = function(renderer) {
+      const sceneTransparent = canvas.scene?.getFlag(MODULE_ID, "transparentBg");
+      const useTransparent = (sceneTransparent !== undefined && sceneTransparent !== null && sceneTransparent !== "")
+        ? (sceneTransparent === "true" || sceneTransparent === true)
+        : game.settings.get(MODULE_ID, "transparentBg");
+
+      if (useTransparent) {
+        // Clear with transparent black (0, 0, 0, 0) to support premultiplied alpha blending
+        renderer.framebuffer.clear(0, 0, 0, 0, PIXI.BUFFER_BITS.COLOR);
+        Object.getPrototypeOf(PCG.prototype)._render.call(this, renderer);
+      } else {
+        originalRender.call(this, renderer);
+      }
+    };
+  }
 });
 
 Hooks.once("ready", () => {
@@ -515,4 +566,41 @@ Hooks.on("renderSceneConfig", (app, html, data) => {
     // Once the user touches the slider, it's no longer "default"
     delete ev.target.dataset.default;
   });
+
+  // Wire up the transparent select dropdown to set background color to #000000 and disable the selection
+  const transparentSelect = transparentGroup.querySelector(`select[name="flags.${MODULE_ID}.transparentBg"]`);
+  const syncBackgroundColor = () => {
+    const isTransparent = (transparentSelect.value === "true") || 
+      (transparentSelect.value === "" && game.settings.get(MODULE_ID, "transparentBg") === true);
+
+    let bgColorGroup = null;
+    for (const label of element.querySelectorAll('label')) {
+      if (label.textContent.trim() === "Background Color") {
+        bgColorGroup = label.closest('.form-group');
+        break;
+      }
+    }
+
+    if (bgColorGroup) {
+      const bgColInputs = bgColorGroup.querySelectorAll('input');
+      for (const input of bgColInputs) {
+        if (isTransparent) {
+          if (input.value !== "#000000") {
+            input.value = "#000000";
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          input.disabled = true;
+          input.style.opacity = "0.5";
+          input.style.cursor = "not-allowed";
+        } else {
+          input.disabled = false;
+          input.style.opacity = "";
+          input.style.cursor = "";
+        }
+      }
+    }
+  };
+  transparentSelect.addEventListener('change', syncBackgroundColor);
+  syncBackgroundColor();
 });
